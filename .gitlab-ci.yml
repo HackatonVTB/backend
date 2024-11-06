@@ -1,0 +1,109 @@
+variables:
+  SERVICE_NAME_DEV: pharm-hub-back-dev_dev
+  SERVICE_NAME_PROD: pharm-hub-back-prod_prod
+  SWARM_UTILS_UPDATE_TOKEN_DEV: TJkK1ZLYlLAq1xeNMJ0KapQojow8ZB
+  SWARM_UTILS_UPDATE_TOKEN_PROD: KM9RbiVeJz7DmfRJWLCmpWahSElF06
+
+stages:
+  - build
+  - deploy
+
+#################
+#BUILD
+#################
+
+build-dev:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      when: never
+    - if: $CI_COMMIT_REF_NAME != "master"
+      when: on_success
+    - when: never
+  stage: build
+  interruptible: true
+  tags:
+    - Internal
+    - Worker
+  script:
+    - docker build . -t $CI_REGISTRY_IMAGE:dev-latest
+    - docker login -u $CI_REGISTRY_USER -p $CI_JOB_TOKEN $CI_REGISTRY
+    - docker push $CI_REGISTRY_IMAGE:dev-latest
+
+build-prod:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      when: never
+    - if: $CI_COMMIT_REF_NAME == "master"
+      when: on_success
+    - when: never
+  stage: build
+  interruptible: true
+  tags:
+    - Internal
+    - Worker
+  script:
+    - docker build . -t $CI_REGISTRY_IMAGE:prod-latest
+    - docker login -u $CI_REGISTRY_USER -p $CI_JOB_TOKEN $CI_REGISTRY
+    - docker push $CI_REGISTRY_IMAGE:prod-latest
+
+##################
+#DEPLOY
+##################
+
+deploy-dev:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      when: never
+    - if: $CI_COMMIT_REF_NAME != "master"
+      when: on_success
+    - when: never
+  stage: deploy
+  interruptible: true
+  tags:
+    - Internal
+    - Worker
+  script:
+    - |
+      docker rm -f swarm_utils-ci-update_service-$SERVICE_NAME_DEV
+      docker run -i --rm \
+        -e TOKEN=$SWARM_UTILS_UPDATE_TOKEN_DEV \
+        -e SERVICE_NAME=$SERVICE_NAME_DEV \
+        -e IMAGE=$CI_REGISTRY_IMAGE:dev-latest \
+        --network=swarm-utils-overlay-net \
+        --entrypoint "/bin/sh" \
+        --name swarm_utils-ci-update_service-$SERVICE_NAME_DEV \
+        alpine:latest -c \
+        'apk add curl && \
+          curl -v --fail-with-body -X POST \
+          -H "Content-Type: application/json" \
+          -d "{\"token\":\"$TOKEN\",\"serviceName\":\"$SERVICE_NAME\",\"image\":\"$IMAGE\",\"isForce\":true}" \
+          http://swarm-utils:3000/api/update/service'
+
+deploy-prod:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      when: never
+    - if: $CI_COMMIT_REF_NAME == "master"
+      when: on_success
+    - when: never
+  stage: deploy
+  interruptible: true
+  tags:
+    - Internal
+    - Worker
+  script:
+    - |
+      docker rm -f swarm_utils-ci-update_service-$SERVICE_NAME_PROD
+      docker run -i --rm \
+        -e TOKEN=$SWARM_UTILS_UPDATE_TOKEN_PROD \
+        -e SERVICE_NAME=$SERVICE_NAME_PROD \
+        -e IMAGE=$CI_REGISTRY_IMAGE:prod-latest \
+        --network=swarm-utils-overlay-net \
+        --entrypoint "/bin/sh" \
+        --name swarm_utils-ci-update_service-$SERVICE_NAME_PROD \
+        alpine:latest -c \
+        'apk add curl && \
+          curl -v --fail-with-body -X POST \
+          -H "Content-Type: application/json" \
+          -d "{\"token\":\"$TOKEN\",\"serviceName\":\"$SERVICE_NAME\",\"image\":\"$IMAGE\",\"isForce\":true}" \
+          http://swarm-utils:3000/api/update/service'
